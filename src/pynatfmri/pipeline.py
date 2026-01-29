@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Union, List, Optional, Tuple, Dict
 import numpy as np
 from itertools import combinations
+import pandas as pd
 
 from .isfc import (
     load_timeseries_from_bids,
@@ -277,6 +278,143 @@ class ISFCPipeline:
             self.save_results()
         
         return self
+    
+    def run_group_analysis(
+        self,
+        participants_df: Optional[pd.DataFrame] = None,
+        group_column: str = "group",
+        behavior_column: Optional[str] = None,
+        output_dir: Optional[Union[str, Path]] = None,
+    ) -> Dict[str, pd.DataFrame]:
+        """
+        Run group-level analyses on computed ISFC data.
+        
+        Performs three analyses: group comparisons, brain-behavior correlations,
+        and within/between-group ISFC comparisons.
+        
+        Parameters
+        ----------
+        participants_df : DataFrame, optional
+            Participant demographics and behavioral data. If None, loads from
+            participants.tsv in BIDS root.
+        group_column : str, default: "group"
+            Column name for group labels
+        behavior_column : str, optional
+            Column name for behavioral measure. If provided, computes
+            brain-behavior correlations.
+        output_dir : str or Path, optional
+            Directory to save results. If None, uses
+            derivatives/pynatfmri_group_analysis/
+        
+        Returns
+        -------
+        results : dict
+            Dictionary with keys:
+            - 'group_comparison': Group comparison statistics
+            - 'brain_behavior': Brain-behavior correlations (if behavior_column provided)
+            - 'within_between': Within-group vs between-group comparisons
+        """
+        if self.isfc_matrix is None:
+            raise ValueError("Must compute ISFC first with compute_isfc()")
+        
+        from .group_analysis import (
+            load_participants_data,
+            load_isfc_results,
+            compare_groups,
+            brain_behavior_correlation,
+            within_vs_between_group_isfc,
+            save_group_analysis_results,
+        )
+        
+        print("\n" + "=" * 70)
+        print("Running Group-Level Analyses")
+        print("=" * 70)
+        
+        # Load participant data if not provided
+        if participants_df is None:
+            print(f"\nLoading participant data from {self.bids_root}...")
+            participants_df = load_participants_data(self.bids_root)
+        
+        # Load ISFC results from saved files
+        print("\nLoading ISFC results from derivatives...")
+        isfc_data, roi_pairs = load_isfc_results(
+            bids_root=self.bids_root,
+            session=self._session,
+            task=self._task,
+            run=self._run,
+            space=self._space,
+            seg=self._seg,
+        )
+        
+        # Set up output directory
+        if output_dir is None:
+            output_dir = self.bids_root / "derivatives" / "pynatfmri_group_analysis"
+        
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        results = {}
+        
+        # Analysis 1: Group comparisons
+        print(f"\nComparing ISFC between {group_column} groups...")
+        group_comparison = compare_groups(
+            isfc_data=isfc_data,
+            participants_df=participants_df,
+            group_column=group_column,
+        )
+        
+        sig_results = group_comparison[group_comparison['p_value_fdr'] < 0.05]
+        print(f"✓ {len(sig_results)} ROI pairs with significant group differences (FDR < 0.05)")
+        
+        save_group_analysis_results(
+            group_comparison,
+            output_dir / "group_comparison.tsv",
+            "Group comparison results"
+        )
+        results['group_comparison'] = group_comparison
+        
+        # Analysis 2: Brain-behavior correlations (if behavioral measure provided)
+        if behavior_column is not None:
+            print(f"\nComputing brain-behavior correlations with {behavior_column}...")
+            brain_behavior = brain_behavior_correlation(
+                isfc_data=isfc_data,
+                participants_df=participants_df,
+                behavior_column=behavior_column,
+                group_column=group_column,
+            )
+            
+            for group_name in brain_behavior['group'].unique():
+                group_data = brain_behavior[brain_behavior['group'] == group_name]
+                sig_corr = group_data[group_data['p_value_fdr'] < 0.05]
+                print(f"  {group_name}: {len(sig_corr)} significant correlations (FDR < 0.05)")
+            
+            save_group_analysis_results(
+                brain_behavior,
+                output_dir / "brain_behavior_correlation.tsv",
+                "Brain-behavior correlation results"
+            )
+            results['brain_behavior'] = brain_behavior
+        
+        # Analysis 3: Within-group vs between-group
+        print(f"\nComparing within-group vs between-group ISFC...")
+        within_between = within_vs_between_group_isfc(
+            isfc_data=isfc_data,
+            participants_df=participants_df,
+            group_column=group_column,
+        )
+        
+        save_group_analysis_results(
+            within_between,
+            output_dir / "within_vs_between_group.tsv",
+            "Within-group vs between-group results"
+        )
+        results['within_between'] = within_between
+        
+        print("\n" + "=" * 70)
+        print(f"Group analysis complete! Results saved to: {output_dir}")
+        print("=" * 70)
+        
+        return results
 
 
 def run_isfc_analysis(
@@ -355,4 +493,83 @@ def run_isfc_analysis(
         roi_names=roi_names,
         symmetric=symmetric,
         save=save,
+    )
+
+def run_group_analysis(
+    bids_root: Union[str, Path],
+    participants_df: Optional[pd.DataFrame] = None,
+    group_column: str = "group",
+    behavior_column: Optional[str] = None,
+    session: str = "01",
+    task: str = "rest",
+    run: str = "01",
+    space: str = "MNI152NLin6Asym",
+    seg: str = "schaefer200",
+    output_dir: Optional[Union[str, Path]] = None,
+) -> Dict[str, pd.DataFrame]:
+    """
+    Run complete group-level analysis pipeline.
+    
+    Convenience function for running group analyses in one step.
+    Performs group comparisons, brain-behavior correlations, and
+    within/between-group ISFC comparisons.
+    
+    Parameters
+    ----------
+    bids_root : str or Path
+        Path to BIDS root directory
+    participants_df : DataFrame, optional
+        Participant demographics and behavioral data. If None, loads from
+        participants.tsv in BIDS root.
+    group_column : str, default: "group"
+        Column name for group labels
+    behavior_column : str, optional
+        Column name for behavioral measure. If provided, computes
+        brain-behavior correlations.
+    session : str, default: "01"
+        Session identifier
+    task : str, default: "rest"
+        Task identifier
+    run : str, default: "01"
+        Run identifier
+    space : str, default: "MNI152NLin6Asym"
+        Space label
+    seg : str, default: "schaefer200"
+        Segmentation label
+    output_dir : str or Path, optional
+        Directory to save results. If None, uses
+        derivatives/pynatfmri_group_analysis/
+    
+    Returns
+    -------
+    results : dict
+        Dictionary with group analysis results:
+        - 'group_comparison': Group comparison statistics
+        - 'brain_behavior': Brain-behavior correlations (if behavior_column provided)
+        - 'within_between': Within-group vs between-group comparisons
+    
+    Examples
+    --------
+    >>> from pynatfmri.pipeline import run_group_analysis
+    >>> results = run_group_analysis(
+    ...     bids_root="path/to/bids",
+    ...     group_column="group",
+    ...     behavior_column="mean_cued",
+    ... )
+    >>> print(results['group_comparison'].head())
+    """
+    pipeline = ISFCPipeline(
+        bids_root=bids_root,
+        session=session,
+        task=task,
+        run=run,
+        space=space,
+        seg=seg,
+    )
+    
+    return pipeline.run_group_analysis(
+        participants_df=participants_df,
+        group_column=group_column,
+        behavior_column=behavior_column,
+        output_dir=output_dir,
     )

@@ -11,8 +11,9 @@ __author__ = "J. Bartolotti"
 # Import main modules
 from . import isfc
 from . import pipeline
+from . import group_analysis
 
 # Import commonly used pipeline functions
-from .pipeline import ISFCPipeline, run_isfc_analysis
+from .pipeline import ISFCPipeline, run_isfc_analysis, run_group_analysis
 
-__all__ = ["isfc", "pipeline", "ISFCPipeline", "run_isfc_analysis"]
+__all__ = ["isfc", "pipeline", "group_analysis", "ISFCPipeline", "run_isfc_analysis", "run_group_analysis"]
