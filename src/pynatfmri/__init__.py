@@ -8,9 +8,11 @@ with a focus on functional connectivity analysis.
 __version__ = "0.1.0"
 __author__ = "J. Bartolotti"
 
-# Import main modules here as they are developed
-# from . import preprocessing
-# from . import connectivity
-# from . import visualization
+# Import main modules
+from . import isfc
+from . import pipeline
 
-__all__ = []
+# Import commonly used pipeline functions
+from .pipeline import ISFCPipeline, run_isfc_analysis
+
+__all__ = ["isfc", "pipeline", "ISFCPipeline", "run_isfc_analysis"]
