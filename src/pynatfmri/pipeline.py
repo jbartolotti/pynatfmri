@@ -314,9 +314,6 @@ class ISFCPipeline:
             - 'brain_behavior': Brain-behavior correlations (if behavior_column provided)
             - 'within_between': Within-group vs between-group comparisons
         """
-        if self.isfc_matrix is None:
-            raise ValueError("Must compute ISFC first with compute_isfc()")
-        
         from .group_analysis import (
             load_participants_data,
             load_isfc_results,
