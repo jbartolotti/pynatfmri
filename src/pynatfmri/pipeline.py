@@ -67,12 +67,12 @@ class ISFCPipeline:
         seg: str = "schaefer200",
     ):
         self.bids_root = Path(bids_root)
-        self.derivative_name = derivative_name
-        self.session = session
-        self.task = task
-        self.run = run
-        self.space = space
-        self.seg = seg
+        self._derivative_name = derivative_name
+        self._session = session
+        self._task = task
+        self._run = run
+        self._space = space
+        self._seg = seg
         
         # Data attributes
         self.data = None
@@ -92,17 +92,17 @@ class ISFCPipeline:
         subjects : list of str, optional
             List of subject IDs to load. If None, loads all available.
         """
-        print(f"Loading timeseries from {self.derivative_name} derivatives...")
+        print(f"Loading timeseries from {self._derivative_name} derivatives...")
         
         self.data, self.subject_ids, self.roi_names = load_timeseries_from_bids(
             bids_root=self.bids_root,
-            derivative_name=self.derivative_name,
+            derivative_name=self._derivative_name,
             subjects=subjects,
-            session=self.session,
-            task=self.task,
-            run=self.run,
-            space=self.space,
-            seg=self.seg,
+            session=self._session,
+            task=self._task,
+            run=self._run,
+            space=self._space,
+            seg=self._seg,
         )
         
         print(f"✓ Loaded {len(self.subject_ids)} subjects")
@@ -228,11 +228,11 @@ class ISFCPipeline:
             subject_pairs=self.subject_pairs,
             roi_pair_names=self.roi_pair_names,
             bids_root=self.bids_root,
-            session=self.session,
-            task=self.task,
-            run=self.run,
-            space=self.space,
-            seg=self.seg,
+            session=self._session,
+            task=self._task,
+            run=self._run,
+            space=self._space,
+            seg=self._seg,
         )
         
         print("✓ Results saved!")
