@@ -174,9 +174,24 @@ def pairwise_isfc(
             ts1 = selected_data[:, roi1, sub1]
             ts2 = selected_data[:, roi2, sub2]
             
-            # Pearson correlation
-            corr = np.corrcoef(ts1, ts2)[0, 1]
-            isfc_matrix[pair_idx, roi_pair_idx] = corr
+            # Find valid (non-NaN) timepoints in both series
+            valid_mask = ~(np.isnan(ts1) | np.isnan(ts2))
+            
+            if np.sum(valid_mask) < 3:
+                # Not enough valid timepoints
+                isfc_matrix[pair_idx, roi_pair_idx] = np.nan
+            else:
+                # Pearson correlation on valid timepoints only
+                corr = np.corrcoef(ts1[valid_mask], ts2[valid_mask])[0, 1]
+                
+                # Fisher-Z transform
+                if np.abs(corr) >= 1.0:
+                    # Handle edge cases
+                    fisher_z = np.nan
+                else:
+                    fisher_z = np.arctanh(corr)
+                
+                isfc_matrix[pair_idx, roi_pair_idx] = fisher_z
     
     return isfc_matrix
 
@@ -233,14 +248,39 @@ def symmetric_pairwise_isfc(
             # Correlation in both directions
             ts1_roi1 = selected_data[:, roi1, sub1]
             ts2_roi2 = selected_data[:, roi2, sub2]
-            corr_forward = np.corrcoef(ts1_roi1, ts2_roi2)[0, 1]
+            
+            # Find valid timepoints for forward correlation
+            valid_forward = ~(np.isnan(ts1_roi1) | np.isnan(ts2_roi2))
             
             ts1_roi2 = selected_data[:, roi2, sub1]
             ts2_roi1 = selected_data[:, roi1, sub2]
-            corr_backward = np.corrcoef(ts1_roi2, ts2_roi1)[0, 1]
             
-            # Average both directions
-            isfc_matrix[pair_idx, roi_pair_idx] = (corr_forward + corr_backward) / 2
+            # Find valid timepoints for backward correlation
+            valid_backward = ~(np.isnan(ts1_roi2) | np.isnan(ts2_roi1))
+            
+            # Compute correlations if enough valid data
+            if np.sum(valid_forward) < 3 and np.sum(valid_backward) < 3:
+                isfc_matrix[pair_idx, roi_pair_idx] = np.nan
+            else:
+                fisher_values = []
+                
+                if np.sum(valid_forward) >= 3:
+                    corr_forward = np.corrcoef(ts1_roi1[valid_forward], 
+                                              ts2_roi2[valid_forward])[0, 1]
+                    if np.abs(corr_forward) < 1.0:
+                        fisher_values.append(np.arctanh(corr_forward))
+                
+                if np.sum(valid_backward) >= 3:
+                    corr_backward = np.corrcoef(ts1_roi2[valid_backward], 
+                                               ts2_roi1[valid_backward])[0, 1]
+                    if np.abs(corr_backward) < 1.0:
+                        fisher_values.append(np.arctanh(corr_backward))
+                
+                # Average Fisher-Z values (or use single value if only one direction valid)
+                if len(fisher_values) > 0:
+                    isfc_matrix[pair_idx, roi_pair_idx] = np.mean(fisher_values)
+                else:
+                    isfc_matrix[pair_idx, roi_pair_idx] = np.nan
     
     return isfc_matrix
 
@@ -311,9 +351,15 @@ def save_isfc_to_bids(
                    for i, (s1, s2) in enumerate(subject_pairs) 
                    if i in pair_indices]
         
-        # Create DataFrame
-        df = pd.DataFrame(subject_isfc, columns=col_names)
-        df.insert(0, 'partner_subject', partners)
+        # Create DataFrame with explicit column creation
+        # Start with partner_subject column
+        df_data = {'partner_subject': partners}
+        
+        # Add each ROI pair column
+        for col_idx, col_name in enumerate(col_names):
+            df_data[col_name] = subject_isfc[:, col_idx]
+        
+        df = pd.DataFrame(df_data)
         
         # Create output directory
         func_dir = deriv_dir / subject / f"ses-{session}" / "func"
