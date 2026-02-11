@@ -12,8 +12,9 @@ __author__ = "J. Bartolotti"
 from . import isfc
 from . import pipeline
 from . import group_analysis
+from . import boundary_isfc
 
 # Import commonly used pipeline functions
 from .pipeline import ISFCPipeline, run_isfc_analysis, run_group_analysis
 
-__all__ = ["isfc", "pipeline", "group_analysis", "ISFCPipeline", "run_isfc_analysis", "run_group_analysis"]
+__all__ = ["isfc", "pipeline", "group_analysis", "boundary_isfc", "ISFCPipeline", "run_isfc_analysis", "run_group_analysis"]
