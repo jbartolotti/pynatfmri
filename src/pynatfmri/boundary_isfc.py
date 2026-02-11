@@ -872,11 +872,12 @@ def compute_concatenated_isfc(
             # Compute cross-group boundary connectivity
             other_group_indices = [i for i, g in enumerate(all_groups_list) if g != group]
             
-            if len(other_group_indices) >= 2:
+            if len(other_group_indices) >= 1:
                 other_group_subjects = [all_subjects_list[i] for i in other_group_indices]
                 
-                other_hpc_boundary = []
-                other_mpfc_boundary = []
+                # Extract and concatenate boundary windows for each other-group subject
+                other_boundary_hpc_by_subject = []
+                other_boundary_mpfc_by_subject = []
                 
                 for sub_id in other_group_subjects:
                     hpc_full = hpc_data_dict.get(sub_id)
@@ -885,21 +886,35 @@ def compute_concatenated_isfc(
                     if hpc_full is None or mpfc_full is None:
                         continue
                     
+                    hpc_boundary_subj = []
+                    mpfc_boundary_subj = []
+                    
                     for _, event_row in events_df.iterrows():
                         boundary_seconds = event_row['boundary_seconds']
                         boundary_center = boundary_seconds + offset_seconds
                         
                         hpc_win, _ = extract_window(hpc_full, boundary_center, window_duration, tr)
                         mpfc_win, _ = extract_window(mpfc_full, boundary_center, window_duration, tr)
-                        other_hpc_boundary.extend(hpc_win[~np.isnan(hpc_win)])
-                        other_mpfc_boundary.extend(mpfc_win[~np.isnan(mpfc_win)])
+                        hpc_boundary_subj.extend(hpc_win)
+                        mpfc_boundary_subj.extend(mpfc_win)
+                    
+                    other_boundary_hpc_by_subject.append(np.array(hpc_boundary_subj))
+                    other_boundary_mpfc_by_subject.append(np.array(mpfc_boundary_subj))
                 
-                if len(other_hpc_boundary) > 0 and len(other_mpfc_boundary) > 0:
+                if len(other_boundary_hpc_by_subject) >= 1:
+                    # Compute mean across other-group subjects
+                    other_hpc_boundary_mean = np.nanmean(
+                        np.column_stack(other_boundary_hpc_by_subject), axis=1
+                    )
+                    other_mpfc_boundary_mean = np.nanmean(
+                        np.column_stack(other_boundary_mpfc_by_subject), axis=1
+                    )
+                    
                     hpc_x_mpfc_cross, _ = compute_correlation_skip_nans(
-                        hpc_boundary_concatenated, np.array(other_mpfc_boundary)
+                        hpc_boundary_concatenated, other_mpfc_boundary_mean
                     )
                     mpfc_x_hpc_cross, _ = compute_correlation_skip_nans(
-                        mpfc_boundary_concatenated, np.array(other_hpc_boundary)
+                        mpfc_boundary_concatenated, other_hpc_boundary_mean
                     )
             
             # Compute full-sample boundary connectivity
@@ -1042,11 +1057,12 @@ def compute_concatenated_isfc(
                         )
             
             # Compute cross-group null connectivity
-            if len(other_group_indices) >= 2:
+            if len(other_group_indices) >= 1:
                 other_group_subjects = [all_subjects_list[i] for i in other_group_indices]
                 
-                other_hpc_null = []
-                other_mpfc_null = []
+                # Extract and concatenate null windows for each other-group subject
+                other_null_hpc_by_subject = []
+                other_null_mpfc_by_subject = []
                 
                 for sub_id in other_group_subjects:
                     hpc_full = hpc_data_dict.get(sub_id)
@@ -1055,22 +1071,33 @@ def compute_concatenated_isfc(
                     if hpc_full is None or mpfc_full is None:
                         continue
                     
+                    hpc_null_subj = []
+                    mpfc_null_subj = []
+                    
                     for null_center in null_window_centers:
                         null_start = null_center + offset_seconds
                         hpc_null_win, _ = extract_window(hpc_full, null_start, window_duration, tr)
                         mpfc_null_win, _ = extract_window(mpfc_full, null_start, window_duration, tr)
-                        other_hpc_null.extend(hpc_null_win[~np.isnan(hpc_null_win)])
-                        other_mpfc_null.extend(mpfc_null_win[~np.isnan(mpfc_null_win)])
+                        hpc_null_subj.extend(hpc_null_win)
+                        mpfc_null_subj.extend(mpfc_null_win)
+                    
+                    other_null_hpc_by_subject.append(np.array(hpc_null_subj))
+                    other_null_mpfc_by_subject.append(np.array(mpfc_null_subj))
                 
-                if len(other_hpc_null) > 0 and len(other_mpfc_null) > 0:
-                    other_hpc_null_mean = np.nanmean(np.array(other_hpc_null))
-                    other_mpfc_null_mean = np.nanmean(np.array(other_mpfc_null))
+                if len(other_null_hpc_by_subject) >= 1:
+                    # Compute mean across other-group subjects
+                    other_hpc_null_mean = np.nanmean(
+                        np.column_stack(other_null_hpc_by_subject), axis=1
+                    )
+                    other_mpfc_null_mean = np.nanmean(
+                        np.column_stack(other_null_mpfc_by_subject), axis=1
+                    )
                     
                     hpc_x_mpfc_cross_null, _ = compute_correlation_skip_nans(
-                        hpc_null_concatenated, np.array(other_mpfc_null)
+                        hpc_null_concatenated, other_mpfc_null_mean
                     )
                     mpfc_x_hpc_cross_null, _ = compute_correlation_skip_nans(
-                        mpfc_null_concatenated, np.array(other_hpc_null)
+                        mpfc_null_concatenated, other_hpc_null_mean
                     )
             
             # Compute full-sample null connectivity
