@@ -210,7 +210,7 @@ def compute_loso_group_mean(
     Parameters
     ----------
     roi_data_list : list of ndarray
-        List of timeseries from each subject in the group
+        List of timeseries from each subject in the group (should be windowed/same length)
     exclude_idx : int
         Index of subject to exclude
     
@@ -364,33 +364,88 @@ def compute_boundary_isfc_single_event(
     other_group_indices = [i for i, g in enumerate(all_groups) if g != group]
     other_group_subjects = [all_subjects[i] for i in other_group_indices]
     
-    # Prepare LOSO data lists for each group
-    same_group_hpc_list = [hpc_data_dict.get(sub_id) for sub_id in same_group_subjects]
-    same_group_mpfc_list = [mpfc_data_dict.get(sub_id) for sub_id in same_group_subjects]
+    # Get timeseries for same-group subjects
+    same_group_hpc_full = []
+    same_group_mpfc_full = []
+    for sub_id in same_group_subjects:
+        hpc = hpc_data_dict.get(sub_id)
+        mpfc = mpfc_data_dict.get(sub_id)
+        if hpc is not None and mpfc is not None:
+            same_group_hpc_full.append(hpc)
+            same_group_mpfc_full.append(mpfc)
     
-    other_group_hpc_list = [hpc_data_dict.get(sub_id) for sub_id in other_group_subjects]
-    other_group_mpfc_list = [mpfc_data_dict.get(sub_id) for sub_id in other_group_subjects]
-    
-    # Remove None entries
-    same_group_hpc_list = [x for x in same_group_hpc_list if x is not None]
-    same_group_mpfc_list = [x for x in same_group_mpfc_list if x is not None]
-    other_group_hpc_list = [x for x in other_group_hpc_list if x is not None]
-    other_group_mpfc_list = [x for x in other_group_mpfc_list if x is not None]
-    
-    if len(same_group_hpc_list) < 2 or len(same_group_mpfc_list) < 2:
+    if len(same_group_hpc_full) < 2 or len(same_group_mpfc_full) < 2:
         warnings.warn(f"Insufficient same-group subjects for {subject_id}")
         return None
     
     # Find subject index within same-group list
-    same_group_subject_idx = same_group_subjects.index(subject_id)
+    same_group_subject_idx = None
+    for idx, sub_id in enumerate(same_group_subjects):
+        if sub_id == subject_id:
+            same_group_subject_idx = idx
+            break
     
-    # Compute LOSO group means for boundary window
-    loso_same_hpc_boundary = compute_loso_group_mean(same_group_hpc_list, same_group_subject_idx)
-    loso_same_mpfc_boundary = compute_loso_group_mean(same_group_mpfc_list, same_group_subject_idx)
+    if same_group_subject_idx is None:
+        warnings.warn(f"Subject {subject_id} not found in same-group list")
+        return None
     
-    # Compute LOSO group means for null window
-    loso_same_hpc_null = compute_loso_group_mean(same_group_hpc_list, same_group_subject_idx)
-    loso_same_mpfc_null = compute_loso_group_mean(same_group_mpfc_list, same_group_subject_idx)
+    # Extract windows for all same-group subjects
+    same_group_hpc_boundary_windows = []
+    same_group_mpfc_boundary_windows = []
+    same_group_hpc_null_windows = []
+    same_group_mpfc_null_windows = []
+    
+    valid_subject_indices = []  # Track which subjects have valid data
+    
+    for idx, sub_id in enumerate(same_group_subjects):
+        hpc_full = hpc_data_dict.get(sub_id)
+        mpfc_full = mpfc_data_dict.get(sub_id)
+        
+        if hpc_full is None or mpfc_full is None:
+            continue
+        
+        # Extract boundary window
+        hpc_win, _ = extract_window(hpc_full, boundary_center, window_duration, tr)
+        mpfc_win, _ = extract_window(mpfc_full, boundary_center, window_duration, tr)
+        same_group_hpc_boundary_windows.append(hpc_win)
+        same_group_mpfc_boundary_windows.append(mpfc_win)
+        
+        # Extract null window (if applicable)
+        if null_window_center is not None:
+            null_center = null_window_center + offset_seconds
+            hpc_null_win, _ = extract_window(hpc_full, null_center, window_duration, tr)
+            mpfc_null_win, _ = extract_window(mpfc_full, null_center, window_duration, tr)
+            same_group_hpc_null_windows.append(hpc_null_win)
+            same_group_mpfc_null_windows.append(mpfc_null_win)
+        
+        valid_subject_indices.append(idx)
+    
+    if len(same_group_hpc_boundary_windows) < 2:
+        warnings.warn(f"Insufficient subjects with valid data for {subject_id}")
+        return None
+    
+    # Compute LOSO group means from WINDOWED data
+    # Find the index of target subject within valid subjects
+    target_idx_in_valid = None
+    for vidx, sidx in enumerate(valid_subject_indices):
+        if sidx == same_group_subject_idx:
+            target_idx_in_valid = vidx
+            break
+    
+    if target_idx_in_valid is None:
+        warnings.warn(f"Target subject {subject_id} not in valid subject list")
+        return None
+    
+    loso_same_hpc_boundary = compute_loso_group_mean(same_group_hpc_boundary_windows, target_idx_in_valid)
+    loso_same_mpfc_boundary = compute_loso_group_mean(same_group_mpfc_boundary_windows, target_idx_in_valid)
+    
+    # Compute LOSO group means for null window (if applicable)
+    loso_same_hpc_null = None
+    loso_same_mpfc_null = None
+    
+    if null_window_center is not None and len(same_group_hpc_null_windows) >= 2:
+        loso_same_hpc_null = compute_loso_group_mean(same_group_hpc_null_windows, target_idx_in_valid)
+        loso_same_mpfc_null = compute_loso_group_mean(same_group_mpfc_null_windows, target_idx_in_valid)
     
     # Compute within-group connectivity for boundary window
     hpc_x_mpfc_within_boundary, n_valid_hb1 = compute_correlation_skip_nans(
@@ -401,42 +456,81 @@ def compute_boundary_isfc_single_event(
     )
     
     # Compute within-group connectivity for null window
-    hpc_x_mpfc_within_null, n_valid_nb1 = compute_correlation_skip_nans(
-        hpc_null, loso_same_mpfc_null
-    )
-    mpfc_x_hpc_within_null, n_valid_nb2 = compute_correlation_skip_nans(
-        mpfc_null, loso_same_hpc_null
-    )
+    if loso_same_mpfc_null is not None:
+        hpc_x_mpfc_within_null, n_valid_nb1 = compute_correlation_skip_nans(
+            hpc_null, loso_same_mpfc_null
+        )
+        mpfc_x_hpc_within_null, n_valid_nb2 = compute_correlation_skip_nans(
+            mpfc_null, loso_same_hpc_null
+        )
+    else:
+        hpc_x_mpfc_within_null = None
+        mpfc_x_hpc_within_null = None
     
     # Compute cross-group connectivity (if other group exists)
-    if len(other_group_hpc_list) >= 2 and len(other_group_mpfc_list) >= 2:
-        # Use mean across other group (simple mean, not LOSO since different group)
-        other_hpc_mean_boundary = np.nanmean(np.column_stack(other_group_hpc_list), axis=1)
-        other_mpfc_mean_boundary = np.nanmean(np.column_stack(other_group_mpfc_list), axis=1)
+    if len(other_group_subjects) >= 2:
+        # Extract windows for other group subjects
+        other_group_hpc_boundary = []
+        other_group_mpfc_boundary = []
+        other_group_hpc_null = []
+        other_group_mpfc_null = []
         
-        other_hpc_mean_null = np.nanmean(np.column_stack(other_group_hpc_list), axis=1)
-        other_mpfc_mean_null = np.nanmean(np.column_stack(other_group_mpfc_list), axis=1)
+        for sub_id in other_group_subjects:
+            hpc_full = hpc_data_dict.get(sub_id)
+            mpfc_full = mpfc_data_dict.get(sub_id)
+            
+            if hpc_full is None or mpfc_full is None:
+                continue
+            
+            # Extract boundary window
+            hpc_win, _ = extract_window(hpc_full, boundary_center, window_duration, tr)
+            mpfc_win, _ = extract_window(mpfc_full, boundary_center, window_duration, tr)
+            other_group_hpc_boundary.append(hpc_win)
+            other_group_mpfc_boundary.append(mpfc_win)
+            
+            # Extract null window (if applicable)
+            if null_window_center is not None:
+                null_center = null_window_center + offset_seconds
+                hpc_null_win, _ = extract_window(hpc_full, null_center, window_duration, tr)
+                mpfc_null_win, _ = extract_window(mpfc_full, null_center, window_duration, tr)
+                other_group_hpc_null.append(hpc_null_win)
+                other_group_mpfc_null.append(mpfc_null_win)
         
-        hpc_x_mpfc_cross_boundary, n_valid_cb1 = compute_correlation_skip_nans(
-            hpc_boundary, other_mpfc_mean_boundary
-        )
-        mpfc_x_hpc_cross_boundary, n_valid_cb2 = compute_correlation_skip_nans(
-            mpfc_boundary, other_hpc_mean_boundary
-        )
-        
-        hpc_x_mpfc_cross_null, n_valid_cn1 = compute_correlation_skip_nans(
-            hpc_null, other_mpfc_mean_null
-        )
-        mpfc_x_hpc_cross_null, n_valid_cn2 = compute_correlation_skip_nans(
-            mpfc_null, other_hpc_mean_null
-        )
+        if len(other_group_hpc_boundary) >= 2 and len(other_group_mpfc_boundary) >= 2:
+            # Compute mean across other group (simple mean, not LOSO since different group)
+            other_hpc_mean_boundary = np.nanmean(np.column_stack(other_group_hpc_boundary), axis=1)
+            other_mpfc_mean_boundary = np.nanmean(np.column_stack(other_group_mpfc_boundary), axis=1)
+            
+            hpc_x_mpfc_cross_boundary, n_valid_cb1 = compute_correlation_skip_nans(
+                hpc_boundary, other_mpfc_mean_boundary
+            )
+            mpfc_x_hpc_cross_boundary, n_valid_cb2 = compute_correlation_skip_nans(
+                mpfc_boundary, other_hpc_mean_boundary
+            )
+            
+            if null_window_center is not None and len(other_group_hpc_null) >= 2:
+                other_hpc_mean_null = np.nanmean(np.column_stack(other_group_hpc_null), axis=1)
+                other_mpfc_mean_null = np.nanmean(np.column_stack(other_group_mpfc_null), axis=1)
+                
+                hpc_x_mpfc_cross_null, n_valid_cn1 = compute_correlation_skip_nans(
+                    hpc_null, other_mpfc_mean_null
+                )
+                mpfc_x_hpc_cross_null, n_valid_cn2 = compute_correlation_skip_nans(
+                    mpfc_null, other_hpc_mean_null
+                )
+            else:
+                hpc_x_mpfc_cross_null = None
+                mpfc_x_hpc_cross_null = None
+        else:
+            hpc_x_mpfc_cross_boundary = None
+            mpfc_x_hpc_cross_boundary = None
+            hpc_x_mpfc_cross_null = None
+            mpfc_x_hpc_cross_null = None
     else:
         hpc_x_mpfc_cross_boundary = None
         mpfc_x_hpc_cross_boundary = None
         hpc_x_mpfc_cross_null = None
         mpfc_x_hpc_cross_null = None
-        n_valid_cb1 = n_valid_cb2 = 0
-        n_valid_cn1 = n_valid_cn2 = 0
     
     result = {
         'subject_id': subject_id,
