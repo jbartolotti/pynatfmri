@@ -2,8 +2,15 @@
 Boundary-centered inter-subject functional connectivity (ISFC) module for pynatfmri.
 
 This module computes inter-subject functional connectivity between ROI pairs
-(e.g., posterior hippocampus and mPFC) during event boundaries and null control windows.
-Supports leave-one-out (LOSO) averaging within and across age groups.
+(e.g., posterior hippocampus and mPFC) using two approaches:
+
+1. Event-locked analysis: Computes connectivity during event boundaries and null control 
+   windows (time-windowed approach)
+   
+2. Concatenated analysis: Computes connectivity using full timeseries concatenated across 
+   all events (subject-level summary approach)
+
+Both approaches support leave-one-out (LOSO) averaging within and across age groups.
 """
 
 import numpy as np
@@ -532,6 +539,74 @@ def compute_boundary_isfc_single_event(
         hpc_x_mpfc_cross_null = None
         mpfc_x_hpc_cross_null = None
     
+    # Compute full-sample connectivity (all subjects regardless of age group)
+    all_hpc_boundary_windows = []
+    all_mpfc_boundary_windows = []
+    all_hpc_null_windows = []
+    all_mpfc_null_windows = []
+    all_valid_subject_indices = []
+    
+    for idx, sub_id in enumerate(all_subjects):
+        hpc_full = hpc_data_dict.get(sub_id)
+        mpfc_full = mpfc_data_dict.get(sub_id)
+        
+        if hpc_full is None or mpfc_full is None:
+            continue
+        
+        # Extract boundary window
+        hpc_win, _ = extract_window(hpc_full, boundary_center, window_duration, tr)
+        mpfc_win, _ = extract_window(mpfc_full, boundary_center, window_duration, tr)
+        all_hpc_boundary_windows.append(hpc_win)
+        all_mpfc_boundary_windows.append(mpfc_win)
+        
+        # Extract null window (if applicable)
+        if null_window_center is not None:
+            null_center = null_window_center + offset_seconds
+            hpc_null_win, _ = extract_window(hpc_full, null_center, window_duration, tr)
+            mpfc_null_win, _ = extract_window(mpfc_full, null_center, window_duration, tr)
+            all_hpc_null_windows.append(hpc_null_win)
+            all_mpfc_null_windows.append(mpfc_null_win)
+        
+        all_valid_subject_indices.append(idx)
+    
+    hpc_x_mpfc_full_boundary = None
+    mpfc_x_hpc_full_boundary = None
+    hpc_x_mpfc_full_null = None
+    mpfc_x_hpc_full_null = None
+    
+    if len(all_hpc_boundary_windows) >= 2 and len(all_mpfc_boundary_windows) >= 2:
+        # Find target subject's index in the full all_subjects list
+        full_subject_idx = None
+        for vidx, sidx in enumerate(all_valid_subject_indices):
+            if sidx == subject_idx:
+                full_subject_idx = vidx
+                break
+        
+        if full_subject_idx is not None:
+            # Compute LOSO group means from full sample
+            loso_full_hpc_boundary = compute_loso_group_mean(all_hpc_boundary_windows, full_subject_idx)
+            loso_full_mpfc_boundary = compute_loso_group_mean(all_mpfc_boundary_windows, full_subject_idx)
+            
+            # Compute full-sample boundary connectivity
+            hpc_x_mpfc_full_boundary, _ = compute_correlation_skip_nans(
+                hpc_boundary, loso_full_mpfc_boundary
+            )
+            mpfc_x_hpc_full_boundary, _ = compute_correlation_skip_nans(
+                mpfc_boundary, loso_full_hpc_boundary
+            )
+            
+            # Compute full-sample null connectivity (if applicable)
+            if null_window_center is not None and len(all_hpc_null_windows) >= 2:
+                loso_full_hpc_null = compute_loso_group_mean(all_hpc_null_windows, full_subject_idx)
+                loso_full_mpfc_null = compute_loso_group_mean(all_mpfc_null_windows, full_subject_idx)
+                
+                hpc_x_mpfc_full_null, _ = compute_correlation_skip_nans(
+                    hpc_null, loso_full_mpfc_null
+                )
+                mpfc_x_hpc_full_null, _ = compute_correlation_skip_nans(
+                    mpfc_null, loso_full_hpc_null
+                )
+    
     result = {
         'subject_id': subject_id,
         'group': group,
@@ -552,9 +627,226 @@ def compute_boundary_isfc_single_event(
         'hpc_x_mpfc_cross_null': hpc_x_mpfc_cross_null,
         'mpfc_x_hpc_cross_null': mpfc_x_hpc_cross_null,
         'n_clean_null': min(hpc_n_clean_null, mpfc_n_clean_null),
+        
+        # Full-sample connectivity (all subjects combined)
+        'hpc_x_mpfc_full_boundary': hpc_x_mpfc_full_boundary,
+        'mpfc_x_hpc_full_boundary': mpfc_x_hpc_full_boundary,
+        'hpc_x_mpfc_full_null': hpc_x_mpfc_full_null,
+        'mpfc_x_hpc_full_null': mpfc_x_hpc_full_null,
     }
     
     return result
+
+
+def compute_concatenated_isfc(
+    events_file: Union[str, Path],
+    participants_file: Union[str, Path],
+    bids_deriv_root: Union[str, Path],
+    hpc_roi: str = "LR_postJHipp_200",
+    mpfc_roi: str = "LR_mPFC_200",
+) -> pd.DataFrame:
+    """
+    Compute ISFC using concatenated timeseries across all events.
+    
+    Instead of windowing around specific boundaries, this computes correlations
+    between one subject's full timeseries (concatenated across all events) and
+    the LOSO group average timeseries (also concatenated).
+    
+    Parameters
+    ----------
+    events_file : str or Path
+        Path to events.csv file
+    participants_file : str or Path
+        Path to participants.tsv file
+    bids_deriv_root : str or Path
+        Path to BIDS derivatives/gimmefMRI folder
+    hpc_roi : str, default: "LR_postJHipp_200"
+        Hippocampus ROI column name
+    mpfc_roi : str, default: "LR_mPFC_200"
+        mPFC ROI column name
+    
+    Returns
+    -------
+    results_df : pd.DataFrame
+        Dataframe with subject-level connectivity values (one row per subject)
+    """
+    # Load metadata
+    events_df = load_boundary_events(events_file)
+    participants_df = load_participants(participants_file)
+    
+    # Create mapping from subject_id to group
+    subject_to_group = dict(zip(participants_df['participant_id'], participants_df['group']))
+    
+    # Get all unique subjects
+    all_subjects_list = sorted(participants_df['participant_id'].unique())
+    all_groups_list = [subject_to_group[sub] for sub in all_subjects_list]
+    
+    # Load all subject timeseries
+    print("Loading timeseries data for concatenated analysis...")
+    hpc_data_dict = {}
+    mpfc_data_dict = {}
+    
+    for subject_id in all_subjects_list:
+        try:
+            roi_data = extract_roi_timeseries(
+                bids_deriv_root, subject_id, [hpc_roi, mpfc_roi]
+            )
+            hpc_data_dict[subject_id] = roi_data[hpc_roi]
+            mpfc_data_dict[subject_id] = roi_data[mpfc_roi]
+            print(f"  Loaded {subject_id}")
+        except Exception as e:
+            warnings.warn(f"Failed to load {subject_id}: {e}")
+    
+    # Compute mean accuracy per subject
+    subject_accuracy_dict = events_df.groupby('subject_id')['accuracy'].mean().to_dict()
+    
+    # Add 'sub-' prefix to subject IDs for consistency
+    subject_accuracy_dict = {f"sub-{k}": v for k, v in subject_accuracy_dict.items()}
+    
+    # Compute concatenated ISFC for each subject
+    print(f"Computing concatenated ISFC for {len(all_subjects_list)} subjects...")
+    results = []
+    
+    for subject_id in all_subjects_list:
+        group = subject_to_group[subject_id]
+        
+        # Get this subject's timeseries
+        hpc_ts = hpc_data_dict.get(subject_id)
+        mpfc_ts = mpfc_data_dict.get(subject_id)
+        
+        if hpc_ts is None or mpfc_ts is None:
+            warnings.warn(f"Missing timeseries for {subject_id}")
+            continue
+        
+        # Find subject index
+        subject_idx = all_subjects_list.index(subject_id)
+        
+        # Find all same-group subjects
+        same_group_indices = [i for i, g in enumerate(all_groups_list) if g == group]
+        same_group_subjects = [all_subjects_list[i] for i in same_group_indices]
+        
+        # Collect same-group timeseries
+        same_group_hpc_ts = []
+        same_group_mpfc_ts = []
+        
+        for sub_id in same_group_subjects:
+            hpc = hpc_data_dict.get(sub_id)
+            mpfc = mpfc_data_dict.get(sub_id)
+            if hpc is not None and mpfc is not None:
+                same_group_hpc_ts.append(hpc)
+                same_group_mpfc_ts.append(mpfc)
+        
+        if len(same_group_hpc_ts) < 2 or len(same_group_mpfc_ts) < 2:
+            warnings.warn(f"Insufficient same-group subjects for {subject_id}")
+            continue
+        
+        # Find subject index within same-group list
+        same_group_subject_idx = None
+        for idx, sub_id in enumerate(same_group_subjects):
+            if sub_id == subject_id:
+                same_group_subject_idx = idx
+                break
+        
+        if same_group_subject_idx is None:
+            warnings.warn(f"Subject {subject_id} not found in same-group list")
+            continue
+        
+        # Compute LOSO group means for full concatenated timeseries
+        loso_same_hpc = compute_loso_group_mean(same_group_hpc_ts, same_group_subject_idx)
+        loso_same_mpfc = compute_loso_group_mean(same_group_mpfc_ts, same_group_subject_idx)
+        
+        # Compute within-group connectivity using full timeseries
+        hpc_x_mpfc_within, _ = compute_correlation_skip_nans(hpc_ts, loso_same_mpfc)
+        mpfc_x_hpc_within, _ = compute_correlation_skip_nans(mpfc_ts, loso_same_hpc)
+        
+        # Compute cross-group connectivity (if other group exists)
+        other_group_indices = [i for i, g in enumerate(all_groups_list) if g != group]
+        
+        hpc_x_mpfc_cross = None
+        mpfc_x_hpc_cross = None
+        
+        if len(other_group_indices) >= 2:
+            other_group_subjects = [all_subjects_list[i] for i in other_group_indices]
+            
+            # Collect other-group timeseries
+            other_group_hpc_ts = []
+            other_group_mpfc_ts = []
+            
+            for sub_id in other_group_subjects:
+                hpc = hpc_data_dict.get(sub_id)
+                mpfc = mpfc_data_dict.get(sub_id)
+                if hpc is not None and mpfc is not None:
+                    other_group_hpc_ts.append(hpc)
+                    other_group_mpfc_ts.append(mpfc)
+            
+            if len(other_group_hpc_ts) >= 2 and len(other_group_mpfc_ts) >= 2:
+                # Compute mean across other group
+                other_hpc_mean = np.nanmean(np.column_stack(other_group_hpc_ts), axis=1)
+                other_mpfc_mean = np.nanmean(np.column_stack(other_group_mpfc_ts), axis=1)
+                
+                hpc_x_mpfc_cross, _ = compute_correlation_skip_nans(hpc_ts, other_mpfc_mean)
+                mpfc_x_hpc_cross, _ = compute_correlation_skip_nans(mpfc_ts, other_hpc_mean)
+        
+        # Compute full-sample connectivity (all subjects combined)
+        all_hpc_ts = []
+        all_mpfc_ts = []
+        all_subject_indices = []
+        
+        for idx, sub_id in enumerate(all_subjects_list):
+            hpc = hpc_data_dict.get(sub_id)
+            mpfc = mpfc_data_dict.get(sub_id)
+            if hpc is not None and mpfc is not None:
+                all_hpc_ts.append(hpc)
+                all_mpfc_ts.append(mpfc)
+                all_subject_indices.append(idx)
+        
+        hpc_x_mpfc_full = None
+        mpfc_x_hpc_full = None
+        
+        if len(all_hpc_ts) >= 2 and len(all_mpfc_ts) >= 2:
+            # Find this subject's index in the full list
+            full_subject_idx = None
+            for vidx, sidx in enumerate(all_subject_indices):
+                if sidx == subject_idx:
+                    full_subject_idx = vidx
+                    break
+            
+            if full_subject_idx is not None:
+                # Compute LOSO group mean using full sample
+                loso_full_hpc = compute_loso_group_mean(all_hpc_ts, full_subject_idx)
+                loso_full_mpfc = compute_loso_group_mean(all_mpfc_ts, full_subject_idx)
+                
+                # Compute full-sample connectivity
+                hpc_x_mpfc_full, _ = compute_correlation_skip_nans(hpc_ts, loso_full_mpfc)
+                mpfc_x_hpc_full, _ = compute_correlation_skip_nans(mpfc_ts, loso_full_hpc)
+        
+        # Get mean accuracy for this subject
+        mean_accuracy = subject_accuracy_dict.get(subject_id, np.nan)
+        
+        result = {
+            'subject_id': subject_id,
+            'group': group,
+            'mean_accuracy': mean_accuracy,
+            
+            # Within-group connectivity (full timeseries)
+            'hpc_x_mpfc_within_concatenated': hpc_x_mpfc_within,
+            'mpfc_x_hpc_within_concatenated': mpfc_x_hpc_within,
+            
+            # Cross-group connectivity (full timeseries)
+            'hpc_x_mpfc_cross_concatenated': hpc_x_mpfc_cross,
+            'mpfc_x_hpc_cross_concatenated': mpfc_x_hpc_cross,
+            
+            # Full-sample connectivity (all subjects combined)
+            'hpc_x_mpfc_full_concatenated': hpc_x_mpfc_full,
+            'mpfc_x_hpc_full_concatenated': mpfc_x_hpc_full,
+        }
+        
+        results.append(result)
+    
+    # Convert to dataframe
+    results_df = pd.DataFrame(results)
+    
+    return results_df
 
 
 def compute_boundary_isfc(
