@@ -719,6 +719,10 @@ def compute_concatenated_isfc(
     unique_boundaries = sorted(events_df['boundary_seconds'].unique())
     boundary_to_idx = {b: i for i, b in enumerate(unique_boundaries)}
     
+    print(f"DEBUG: Number of rows in events_df: {len(events_df)}")
+    print(f"DEBUG: Number of unique boundaries: {len(unique_boundaries)}")
+    print(f"DEBUG: Unique boundaries: {unique_boundaries}")
+    
     # Compute null window center times (midpoint between consecutive boundaries)
     null_window_centers = []
     for idx, boundary in enumerate(unique_boundaries):
@@ -726,6 +730,8 @@ def compute_concatenated_isfc(
             next_boundary = unique_boundaries[idx + 1]
             null_center = (boundary + next_boundary) / 2.0
             null_window_centers.append(null_center)
+    
+    print(f"DEBUG: Number of null window centers: {len(null_window_centers)}")
     
     # Compute concatenated ISFC for each subject
     print(f"Computing concatenated ISFC for {len(all_subjects_list)} subjects...")
@@ -778,23 +784,25 @@ def compute_concatenated_isfc(
         # ==================== BOUNDARY WINDOW CONCATENATED ANALYSIS ====================
         
         # Extract 24s windows around each boundary event and concatenate
+        # Keep NaNs to maintain alignment with group means
         hpc_boundary_concatenated = []
         mpfc_boundary_concatenated = []
         
-        for _, event_row in events_df.iterrows():
-            boundary_seconds = event_row['boundary_seconds']
+        for boundary_seconds in unique_boundaries:
             boundary_center = boundary_seconds + offset_seconds
             
             # Extract window
             hpc_win, _ = extract_window(hpc_ts, boundary_center, window_duration, tr)
             mpfc_win, _ = extract_window(mpfc_ts, boundary_center, window_duration, tr)
             
-            # Append clean data to concatenated lists
-            hpc_boundary_concatenated.extend(hpc_win[~np.isnan(hpc_win)])
-            mpfc_boundary_concatenated.extend(mpfc_win[~np.isnan(mpfc_win)])
+            # Append all data including NaNs for alignment
+            hpc_boundary_concatenated.extend(hpc_win)
+            mpfc_boundary_concatenated.extend(mpfc_win)
         
         hpc_boundary_concatenated = np.array(hpc_boundary_concatenated)
         mpfc_boundary_concatenated = np.array(mpfc_boundary_concatenated)
+        
+        print(f"DEBUG [{subject_id}]: Boundary window - iterating through {len(events_df)} rows, got {len(hpc_boundary_concatenated)} samples HPC, {len(mpfc_boundary_concatenated)} samples mPFC")
         
         hpc_x_mpfc_within = None
         mpfc_x_hpc_within = None
@@ -817,8 +825,7 @@ def compute_concatenated_isfc(
                     if hpc_full is None or mpfc_full is None:
                         continue
                     
-                    for _, event_row in events_df.iterrows():
-                        boundary_seconds = event_row['boundary_seconds']
+                    for boundary_seconds in unique_boundaries:
                         boundary_center = boundary_seconds + offset_seconds
                         
                         hpc_win, _ = extract_window(hpc_full, boundary_center, window_duration, tr)
@@ -844,8 +851,7 @@ def compute_concatenated_isfc(
                         hpc_boundary_subj = []
                         mpfc_boundary_subj = []
                         
-                        for _, event_row in events_df.iterrows():
-                            boundary_seconds = event_row['boundary_seconds']
+                        for boundary_seconds in unique_boundaries:
                             boundary_center = boundary_seconds + offset_seconds
                             
                             hpc_win, _ = extract_window(hpc_full, boundary_center, window_duration, tr)
@@ -889,8 +895,7 @@ def compute_concatenated_isfc(
                     hpc_boundary_subj = []
                     mpfc_boundary_subj = []
                     
-                    for _, event_row in events_df.iterrows():
-                        boundary_seconds = event_row['boundary_seconds']
+                    for boundary_seconds in unique_boundaries:
                         boundary_center = boundary_seconds + offset_seconds
                         
                         hpc_win, _ = extract_window(hpc_full, boundary_center, window_duration, tr)
@@ -933,8 +938,7 @@ def compute_concatenated_isfc(
                     hpc_boundary_subj = []
                     mpfc_boundary_subj = []
                     
-                    for _, event_row in events_df.iterrows():
-                        boundary_seconds = event_row['boundary_seconds']
+                    for boundary_seconds in unique_boundaries:
                         boundary_center = boundary_seconds + offset_seconds
                         
                         hpc_win, _ = extract_window(hpc_full, boundary_center, window_duration, tr)
@@ -968,6 +972,7 @@ def compute_concatenated_isfc(
         # ==================== NULL WINDOW CONCATENATED ANALYSIS ====================
         
         # Extract null windows for all events and concatenate
+        # Keep NaNs to maintain alignment with group means
         hpc_null_concatenated = []
         mpfc_null_concatenated = []
         
@@ -978,12 +983,14 @@ def compute_concatenated_isfc(
             hpc_null_win, _ = extract_window(hpc_ts, null_start, window_duration, tr)
             mpfc_null_win, _ = extract_window(mpfc_ts, null_start, window_duration, tr)
             
-            # Append to concatenated lists
-            hpc_null_concatenated.extend(hpc_null_win[~np.isnan(hpc_null_win)])
-            mpfc_null_concatenated.extend(mpfc_null_win[~np.isnan(mpfc_null_win)])
+            # Append all data including NaNs for alignment
+            hpc_null_concatenated.extend(hpc_null_win)
+            mpfc_null_concatenated.extend(mpfc_null_win)
         
         hpc_null_concatenated = np.array(hpc_null_concatenated)
         mpfc_null_concatenated = np.array(mpfc_null_concatenated)
+        
+        print(f"DEBUG [{subject_id}]: Null window - iterating through {len(null_window_centers)} null windows, got {len(hpc_null_concatenated)} samples HPC, {len(mpfc_null_concatenated)} samples mPFC")
         
         # Compute same-group null window connectivity
         hpc_x_mpfc_within_null = None
