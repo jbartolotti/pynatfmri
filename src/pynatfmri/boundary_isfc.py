@@ -607,6 +607,129 @@ def compute_boundary_isfc_single_event(
                     mpfc_null, loso_full_hpc_null
                 )
     
+    # ==================== INTRA-SUBJECT FUNCTIONAL CONNECTIVITY (ISFC) ====================
+    # Correlate subject's own HPC with their own mPFC (not group average)
+    
+    hpc_x_mpfc_intra_boundary, _ = compute_correlation_skip_nans(
+        hpc_boundary, mpfc_boundary
+    )
+    
+    if hpc_null is not None and mpfc_null is not None:
+        hpc_x_mpfc_intra_null, _ = compute_correlation_skip_nans(
+            hpc_null, mpfc_null
+        )
+    else:
+        hpc_x_mpfc_intra_null = None
+    
+    # Note: For intra-subject, there's no "within", "cross", or "full" distinction
+    # (intra is fundamentally different from inter-subject measures)
+    # So we label these as "intra"
+    
+    # ==================== INTER-SUBJECT CORRELATION (ISC) ====================
+    # Correlate subject's HPC with group HPC (instead of group mPFC)
+    # and subject's mPFC with group mPFC
+    
+    # Within-group ISC
+    hpc_x_hpc_within_boundary = None
+    mpfc_x_mpfc_within_boundary = None
+    
+    if loso_same_hpc_boundary is not None:
+        hpc_x_hpc_within_boundary, _ = compute_correlation_skip_nans(
+            hpc_boundary, loso_same_hpc_boundary
+        )
+    
+    if loso_same_mpfc_boundary is not None:
+        mpfc_x_mpfc_within_boundary, _ = compute_correlation_skip_nans(
+            mpfc_boundary, loso_same_mpfc_boundary
+        )
+    
+    # Null window within-group ISC
+    hpc_x_hpc_within_null = None
+    mpfc_x_mpfc_within_null = None
+    
+    if loso_same_hpc_null is not None:
+        hpc_x_hpc_within_null, _ = compute_correlation_skip_nans(
+            hpc_null, loso_same_hpc_null
+        )
+    
+    if loso_same_mpfc_null is not None:
+        mpfc_x_mpfc_within_null, _ = compute_correlation_skip_nans(
+            mpfc_null, loso_same_mpfc_null
+        )
+    
+    # Cross-group ISC
+    hpc_x_hpc_cross_boundary = None
+    mpfc_x_mpfc_cross_boundary = None
+    hpc_x_hpc_cross_null = None
+    mpfc_x_mpfc_cross_null = None
+    
+    if len(other_group_subjects) >= 2:
+        # HPC-HPC cross-group
+        if len(other_group_hpc_boundary) >= 2:
+            other_hpc_mean_boundary = np.nanmean(np.column_stack(other_group_hpc_boundary), axis=1)
+            hpc_x_hpc_cross_boundary, _ = compute_correlation_skip_nans(
+                hpc_boundary, other_hpc_mean_boundary
+            )
+        
+        # mPFC-mPFC cross-group
+        if len(other_group_mpfc_boundary) >= 2:
+            other_mpfc_mean_boundary = np.nanmean(np.column_stack(other_group_mpfc_boundary), axis=1)
+            mpfc_x_mpfc_cross_boundary, _ = compute_correlation_skip_nans(
+                mpfc_boundary, other_mpfc_mean_boundary
+            )
+        
+        # Null window cross-group ISC
+        if null_window_center is not None and len(other_group_hpc_null) >= 2:
+            other_hpc_mean_null = np.nanmean(np.column_stack(other_group_hpc_null), axis=1)
+            hpc_x_hpc_cross_null, _ = compute_correlation_skip_nans(
+                hpc_null, other_hpc_mean_null
+            )
+        
+        if null_window_center is not None and len(other_group_mpfc_null) >= 2:
+            other_mpfc_mean_null = np.nanmean(np.column_stack(other_group_mpfc_null), axis=1)
+            mpfc_x_mpfc_cross_null, _ = compute_correlation_skip_nans(
+                mpfc_null, other_mpfc_mean_null
+            )
+    
+    # Full-sample ISC
+    hpc_x_hpc_full_boundary = None
+    mpfc_x_mpfc_full_boundary = None
+    hpc_x_hpc_full_null = None
+    mpfc_x_mpfc_full_null = None
+    
+    if len(all_hpc_boundary_windows) >= 2:
+        # Find target subject's index in the full list
+        full_subject_idx_for_isc = None
+        for vidx, sidx in enumerate(all_valid_subject_indices):
+            if sidx == subject_idx:
+                full_subject_idx_for_isc = vidx
+                break
+        
+        if full_subject_idx_for_isc is not None:
+            # HPC-HPC full-sample
+            loso_full_hpc_for_isc = compute_loso_group_mean(all_hpc_boundary_windows, full_subject_idx_for_isc)
+            hpc_x_hpc_full_boundary, _ = compute_correlation_skip_nans(
+                hpc_boundary, loso_full_hpc_for_isc
+            )
+            
+            # mPFC-mPFC full-sample
+            loso_full_mpfc_for_isc = compute_loso_group_mean(all_mpfc_boundary_windows, full_subject_idx_for_isc)
+            mpfc_x_mpfc_full_boundary, _ = compute_correlation_skip_nans(
+                mpfc_boundary, loso_full_mpfc_for_isc
+            )
+            
+            # Null window full-sample ISC
+            if null_window_center is not None and len(all_hpc_null_windows) >= 2:
+                loso_full_hpc_null_for_isc = compute_loso_group_mean(all_hpc_null_windows, full_subject_idx_for_isc)
+                hpc_x_hpc_full_null, _ = compute_correlation_skip_nans(
+                    hpc_null, loso_full_hpc_null_for_isc
+                )
+                
+                loso_full_mpfc_null_for_isc = compute_loso_group_mean(all_mpfc_null_windows, full_subject_idx_for_isc)
+                mpfc_x_mpfc_full_null, _ = compute_correlation_skip_nans(
+                    mpfc_null, loso_full_mpfc_null_for_isc
+                )
+    
     result = {
         'subject_id': subject_id,
         'group': group,
@@ -614,25 +737,55 @@ def compute_boundary_isfc_single_event(
         'accuracy': accuracy,
         'boundary_seconds': boundary_seconds,
         
-        # Boundary window connectivity
+        # ========== INTER-SUBJECT FUNCTIONAL CONNECTIVITY (ISFC) ==========
+        # One subject's ROI correlated with OTHER subjects' OTHER ROI
+        # (e.g., subject's HPC with group's mPFC)
+        
+        # Boundary window ISFC
         'hpc_x_mpfc_within_boundary': hpc_x_mpfc_within_boundary,
         'mpfc_x_hpc_within_boundary': mpfc_x_hpc_within_boundary,
         'hpc_x_mpfc_cross_boundary': hpc_x_mpfc_cross_boundary,
         'mpfc_x_hpc_cross_boundary': mpfc_x_hpc_cross_boundary,
+        'hpc_x_mpfc_full_boundary': hpc_x_mpfc_full_boundary,
+        'mpfc_x_hpc_full_boundary': mpfc_x_hpc_full_boundary,
         'n_clean_boundary': min(hpc_n_clean_boundary, mpfc_n_clean_boundary),
         
-        # Null window connectivity
+        # Null window ISFC
         'hpc_x_mpfc_within_null': hpc_x_mpfc_within_null,
         'mpfc_x_hpc_within_null': mpfc_x_hpc_within_null,
         'hpc_x_mpfc_cross_null': hpc_x_mpfc_cross_null,
         'mpfc_x_hpc_cross_null': mpfc_x_hpc_cross_null,
-        'n_clean_null': min(hpc_n_clean_null, mpfc_n_clean_null),
-        
-        # Full-sample connectivity (all subjects combined)
-        'hpc_x_mpfc_full_boundary': hpc_x_mpfc_full_boundary,
-        'mpfc_x_hpc_full_boundary': mpfc_x_hpc_full_boundary,
         'hpc_x_mpfc_full_null': hpc_x_mpfc_full_null,
         'mpfc_x_hpc_full_null': mpfc_x_hpc_full_null,
+        'n_clean_null': min(hpc_n_clean_null, mpfc_n_clean_null),
+        
+        # ========== INTRA-SUBJECT FUNCTIONAL CONNECTIVITY (ISFC_INTRA) ==========
+        # Subject's own HPC correlated with subject's own mPFC
+        # (intrahemispheric or within-subject coupling)
+        
+        # Boundary window intra-subject
+        'hpc_x_mpfc_intra_boundary': hpc_x_mpfc_intra_boundary,
+        'hpc_x_mpfc_intra_null': hpc_x_mpfc_intra_null,
+        
+        # ========== INTER-SUBJECT CORRELATION (ISC) ==========
+        # One subject's ROI correlated with OTHER subjects' SAME ROI
+        # (e.g., subject's HPC with group's HPC)
+        
+        # Boundary window ISC
+        'hpc_x_hpc_within_boundary': hpc_x_hpc_within_boundary,
+        'mpfc_x_mpfc_within_boundary': mpfc_x_mpfc_within_boundary,
+        'hpc_x_hpc_cross_boundary': hpc_x_hpc_cross_boundary,
+        'mpfc_x_mpfc_cross_boundary': mpfc_x_mpfc_cross_boundary,
+        'hpc_x_hpc_full_boundary': hpc_x_hpc_full_boundary,
+        'mpfc_x_mpfc_full_boundary': mpfc_x_mpfc_full_boundary,
+        
+        # Null window ISC
+        'hpc_x_hpc_within_null': hpc_x_hpc_within_null,
+        'mpfc_x_mpfc_within_null': mpfc_x_mpfc_within_null,
+        'hpc_x_hpc_cross_null': hpc_x_hpc_cross_null,
+        'mpfc_x_mpfc_cross_null': mpfc_x_mpfc_cross_null,
+        'hpc_x_hpc_full_null': hpc_x_hpc_full_null,
+        'mpfc_x_mpfc_full_null': mpfc_x_mpfc_full_null,
     }
     
     return result
@@ -802,7 +955,7 @@ def compute_concatenated_isfc(
         hpc_boundary_concatenated = np.array(hpc_boundary_concatenated)
         mpfc_boundary_concatenated = np.array(mpfc_boundary_concatenated)
         
-        print(f"DEBUG [{subject_id}]: Boundary window - iterating through {len(events_df)} rows, got {len(hpc_boundary_concatenated)} samples HPC, {len(mpfc_boundary_concatenated)} samples mPFC")
+        print(f"DEBUG [{subject_id}]: Boundary window - iterating through {len(unique_boundaries)} unique boundaries, got {len(hpc_boundary_concatenated)} samples HPC, {len(mpfc_boundary_concatenated)} samples mPFC")
         
         hpc_x_mpfc_within = None
         mpfc_x_hpc_within = None
@@ -990,7 +1143,7 @@ def compute_concatenated_isfc(
         hpc_null_concatenated = np.array(hpc_null_concatenated)
         mpfc_null_concatenated = np.array(mpfc_null_concatenated)
         
-        print(f"DEBUG [{subject_id}]: Null window - iterating through {len(null_window_centers)} null windows, got {len(hpc_null_concatenated)} samples HPC, {len(mpfc_null_concatenated)} samples mPFC")
+        print(f"DEBUG [{subject_id}]: Null window - iterating through {len(null_window_centers)} null windows ({len(null_window_centers)} centers), got {len(hpc_null_concatenated)} samples HPC, {len(mpfc_null_concatenated)} samples mPFC")
         
         # Compute same-group null window connectivity
         hpc_x_mpfc_within_null = None
@@ -1156,26 +1309,194 @@ def compute_concatenated_isfc(
         # Get mean accuracy for this subject
         mean_accuracy = subject_accuracy_dict.get(subject_id, np.nan)
         
+        # ==================== INTRA-SUBJECT FUNCTIONAL CONNECTIVITY ====================
+        # Correlate subject's own HPC with their own mPFC (not group average)
+        
+        hpc_x_mpfc_intra_boundary = None
+        hpc_x_mpfc_intra_null = None
+        
+        if len(hpc_boundary_concatenated) > 0 and len(mpfc_boundary_concatenated) > 0:
+            hpc_x_mpfc_intra_boundary, _ = compute_correlation_skip_nans(
+                hpc_boundary_concatenated, mpfc_boundary_concatenated
+            )
+        
+        if len(hpc_null_concatenated) > 0 and len(mpfc_null_concatenated) > 0:
+            hpc_x_mpfc_intra_null, _ = compute_correlation_skip_nans(
+                hpc_null_concatenated, mpfc_null_concatenated
+            )
+        
+        # ==================== INTER-SUBJECT CORRELATION (ISC) ====================
+        # Correlate subject's HPC with group HPC (instead of group mPFC)
+        # and subject's mPFC with group mPFC
+        
+        # Within-group ISC - boundary window
+        hpc_x_hpc_within = None
+        mpfc_x_mpfc_within = None
+        
+        if hpc_x_mpfc_within is not None and len(same_group_hpc_ts) >= 2:
+            # Use the same group structure already computed
+            if len(boundary_hpc_by_subject) >= 2:
+                loso_same_hpc = compute_loso_group_mean(boundary_hpc_by_subject, same_group_subject_idx)
+                hpc_x_hpc_within, _ = compute_correlation_skip_nans(
+                    hpc_boundary_concatenated, loso_same_hpc
+                )
+                
+                loso_same_mpfc = compute_loso_group_mean(boundary_mpfc_by_subject, same_group_subject_idx)
+                mpfc_x_mpfc_within, _ = compute_correlation_skip_nans(
+                    mpfc_boundary_concatenated, loso_same_mpfc
+                )
+        
+        # Cross-group ISC - boundary window
+        hpc_x_hpc_cross = None
+        mpfc_x_mpfc_cross = None
+        
+        if len(other_boundary_hpc_by_subject) >= 1:
+            other_hpc_boundary_mean = np.nanmean(
+                np.column_stack(other_boundary_hpc_by_subject), axis=1
+            )
+            hpc_x_hpc_cross, _ = compute_correlation_skip_nans(
+                hpc_boundary_concatenated, other_hpc_boundary_mean
+            )
+            
+            other_mpfc_boundary_mean = np.nanmean(
+                np.column_stack(other_boundary_mpfc_by_subject), axis=1
+            )
+            mpfc_x_mpfc_cross, _ = compute_correlation_skip_nans(
+                mpfc_boundary_concatenated, other_mpfc_boundary_mean
+            )
+        
+        # Full-sample ISC - boundary window
+        hpc_x_hpc_full = None
+        mpfc_x_mpfc_full = None
+        
+        if hpc_x_mpfc_full is not None and len(all_subjects_list) >= 2:
+            if len(all_hpc_boundary) >= 2:
+                # Find this subject's index
+                full_boundary_idx = None
+                for vidx, sidx in enumerate(all_boundary_indices):
+                    if sidx == subject_idx:
+                        full_boundary_idx = vidx
+                        break
+                
+                if full_boundary_idx is not None:
+                    loso_full_hpc = compute_loso_group_mean(all_hpc_boundary, full_boundary_idx)
+                    hpc_x_hpc_full, _ = compute_correlation_skip_nans(
+                        hpc_boundary_concatenated, loso_full_hpc
+                    )
+                    
+                    loso_full_mpfc = compute_loso_group_mean(all_mpfc_boundary, full_boundary_idx)
+                    mpfc_x_mpfc_full, _ = compute_correlation_skip_nans(
+                        mpfc_boundary_concatenated, loso_full_mpfc
+                    )
+        
+        # Within-group ISC - null window
+        hpc_x_hpc_within_null = None
+        mpfc_x_mpfc_within_null = None
+        
+        if hpc_x_mpfc_within_null is not None and len(null_hpc_by_subject) >= 2:
+            loso_same_hpc_null = compute_loso_group_mean(null_hpc_by_subject, same_group_subject_idx)
+            hpc_x_hpc_within_null, _ = compute_correlation_skip_nans(
+                hpc_null_concatenated, loso_same_hpc_null
+            )
+            
+            loso_same_mpfc_null = compute_loso_group_mean(null_mpfc_by_subject, same_group_subject_idx)
+            mpfc_x_mpfc_within_null, _ = compute_correlation_skip_nans(
+                mpfc_null_concatenated, loso_same_mpfc_null
+            )
+        
+        # Cross-group ISC - null window
+        hpc_x_hpc_cross_null = None
+        mpfc_x_mpfc_cross_null = None
+        
+        if len(other_null_hpc_by_subject) >= 1:
+            other_hpc_null_mean = np.nanmean(
+                np.column_stack(other_null_hpc_by_subject), axis=1
+            )
+            hpc_x_hpc_cross_null, _ = compute_correlation_skip_nans(
+                hpc_null_concatenated, other_hpc_null_mean
+            )
+            
+            other_mpfc_null_mean = np.nanmean(
+                np.column_stack(other_null_mpfc_by_subject), axis=1
+            )
+            mpfc_x_mpfc_cross_null, _ = compute_correlation_skip_nans(
+                mpfc_null_concatenated, other_mpfc_null_mean
+            )
+        
+        # Full-sample ISC - null window
+        hpc_x_hpc_full_null = None
+        mpfc_x_mpfc_full_null = None
+        
+        if hpc_x_mpfc_full_null is not None and len(all_hpc_null) >= 2:
+            # Find this subject's index in the null list
+            full_null_idx = None
+            for vidx, sidx in enumerate(all_null_indices):
+                if sidx == subject_idx:
+                    full_null_idx = vidx
+                    break
+            
+            if full_null_idx is not None:
+                loso_full_hpc_null = compute_loso_group_mean(all_hpc_null, full_null_idx)
+                hpc_x_hpc_full_null, _ = compute_correlation_skip_nans(
+                    hpc_null_concatenated, loso_full_hpc_null
+                )
+                
+                loso_full_mpfc_null = compute_loso_group_mean(all_mpfc_null, full_null_idx)
+                mpfc_x_mpfc_full_null, _ = compute_correlation_skip_nans(
+                    mpfc_null_concatenated, loso_full_mpfc_null
+                )
+        
         result = {
             'subject_id': subject_id,
             'group': group,
             'mean_accuracy': mean_accuracy,
             
-            # Boundary window connectivity (concatenated windowed)
-            'hpc_x_mpfc_within_concatenated': hpc_x_mpfc_within,
-            'mpfc_x_hpc_within_concatenated': mpfc_x_hpc_within,
-            'hpc_x_mpfc_cross_concatenated': hpc_x_mpfc_cross,
-            'mpfc_x_hpc_cross_concatenated': mpfc_x_hpc_cross,
-            'hpc_x_mpfc_full_concatenated': hpc_x_mpfc_full,
-            'mpfc_x_hpc_full_concatenated': mpfc_x_hpc_full,
+            # ========== INTER-SUBJECT FUNCTIONAL CONNECTIVITY (ISFC) ==========
+            # One subject's ROI correlated with OTHER subjects' OTHER ROI
+            # (e.g., subject's HPC with group's mPFC)
             
-            # Null window connectivity (concatenated)
-            'hpc_x_mpfc_within_null_concatenated': hpc_x_mpfc_within_null,
-            'mpfc_x_hpc_within_null_concatenated': mpfc_x_hpc_within_null,
-            'hpc_x_mpfc_cross_null_concatenated': hpc_x_mpfc_cross_null,
-            'mpfc_x_hpc_cross_null_concatenated': mpfc_x_hpc_cross_null,
-            'hpc_x_mpfc_full_null_concatenated': hpc_x_mpfc_full_null,
-            'mpfc_x_hpc_full_null_concatenated': mpfc_x_hpc_full_null,
+            # Boundary window ISFC (concatenated)
+            'hpc_x_mpfc_within_boundary': hpc_x_mpfc_within,
+            'mpfc_x_hpc_within_boundary': mpfc_x_hpc_within,
+            'hpc_x_mpfc_cross_boundary': hpc_x_mpfc_cross,
+            'mpfc_x_hpc_cross_boundary': mpfc_x_hpc_cross,
+            'hpc_x_mpfc_full_boundary': hpc_x_mpfc_full,
+            'mpfc_x_hpc_full_boundary': mpfc_x_hpc_full,
+            
+            # Null window ISFC (concatenated)
+            'hpc_x_mpfc_within_null': hpc_x_mpfc_within_null,
+            'mpfc_x_hpc_within_null': mpfc_x_hpc_within_null,
+            'hpc_x_mpfc_cross_null': hpc_x_mpfc_cross_null,
+            'mpfc_x_hpc_cross_null': mpfc_x_hpc_cross_null,
+            'hpc_x_mpfc_full_null': hpc_x_mpfc_full_null,
+            'mpfc_x_hpc_full_null': mpfc_x_hpc_full_null,
+            
+            # ========== INTRA-SUBJECT FUNCTIONAL CONNECTIVITY (INTRA) ==========
+            # Subject's own HPC correlated with subject's own mPFC
+            # (intrahemispheric or within-subject coupling)
+            
+            'hpc_x_mpfc_intra_boundary': hpc_x_mpfc_intra_boundary,
+            'hpc_x_mpfc_intra_null': hpc_x_mpfc_intra_null,
+            
+            # ========== INTER-SUBJECT CORRELATION (ISC) ==========
+            # One subject's ROI correlated with OTHER subjects' SAME ROI
+            # (e.g., subject's HPC with group's HPC)
+            
+            # Boundary window ISC
+            'hpc_x_hpc_within_boundary': hpc_x_hpc_within,
+            'mpfc_x_mpfc_within_boundary': mpfc_x_mpfc_within,
+            'hpc_x_hpc_cross_boundary': hpc_x_hpc_cross,
+            'mpfc_x_mpfc_cross_boundary': mpfc_x_mpfc_cross,
+            'hpc_x_hpc_full_boundary': hpc_x_hpc_full,
+            'mpfc_x_mpfc_full_boundary': mpfc_x_mpfc_full,
+            
+            # Null window ISC
+            'hpc_x_hpc_within_null': hpc_x_hpc_within_null,
+            'mpfc_x_mpfc_within_null': mpfc_x_mpfc_within_null,
+            'hpc_x_hpc_cross_null': hpc_x_hpc_cross_null,
+            'mpfc_x_mpfc_cross_null': mpfc_x_mpfc_cross_null,
+            'hpc_x_hpc_full_null': hpc_x_hpc_full_null,
+            'mpfc_x_mpfc_full_null': mpfc_x_mpfc_full_null,
         }
         
         results.append(result)
